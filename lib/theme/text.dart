@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'package:nimbus/theme/colors.dart';
 
 class AppTextTheme {
@@ -7,9 +6,9 @@ class AppTextTheme {
 
   static TextTheme build() {
     final TextTheme base = ThemeData.dark().textTheme;
-    final TextTheme inter = GoogleFonts.interTextTheme(base);
+    final TextTheme satoshi = base.apply(fontFamily: 'Satoshi');
 
-    return inter.apply(
+    return satoshi.apply(
       bodyColor: AppColors.textPrimary,
       displayColor: AppColors.textPrimary,
     );
