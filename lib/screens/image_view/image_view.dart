@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:iconify_flutter/iconify_flutter.dart';
@@ -6,12 +7,17 @@ import 'package:iconify_flutter/icons/ion.dart';
 import 'package:intl/intl.dart';
 import 'package:nimbus/core/media/media_item.dart';
 import 'package:nimbus/core/media/thumbnail_ref.dart';
+import 'package:nimbus/models/face_album.dart';
+import 'package:nimbus/models/face_record.dart';
 import 'package:nimbus/screens/media_viewer/media_viewer_item.dart';
 import 'package:nimbus/services/album_repository.dart';
+import 'package:nimbus/services/face_recognition_service.dart';
 import 'package:nimbus/services/hive_trash.dart';
+import 'package:nimbus/services/hive_face_service.dart';
 import 'package:nimbus/services/trash_repository.dart';
 import 'package:nimbus/services/prefs_album.dart';
 import 'package:nimbus/widgets/toast.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:photo_manager/photo_manager.dart';
 
 class ImageViewScreen extends StatefulWidget {
@@ -94,6 +100,7 @@ class _ImageViewScreenState extends State<ImageViewScreen> {
   late List<MediaViewerItem> _items;
   late PageController _pageController;
   int _currentIndex = 0;
+  bool _isRecognizingFace = false;
   final Map<String, Future<File?>> _fileFutures = <String, Future<File?>>{};
   final Map<String, bool> _favoriteStates = <String, bool>{};
 
@@ -148,7 +155,26 @@ class _ImageViewScreenState extends State<ImageViewScreen> {
       return null;
     }
 
-    return thumbnail.asset.file;
+    final AssetEntity asset = thumbnail.asset;
+    File? file = await asset.file;
+    file ??= await asset.originFile;
+    if (file != null) {
+      return file;
+    }
+
+    final Uint8List? bytes = await asset.originBytes;
+    if (bytes == null || bytes.isEmpty) {
+      return null;
+    }
+
+    final Directory tempDir = await getTemporaryDirectory();
+    final String extension = asset.type == AssetType.video ? 'mp4' : 'jpg';
+    final String safeId = asset.id.replaceAll(RegExp(r'[^a-zA-Z0-9_]'), '_');
+    final File tempFile = File(
+      '${tempDir.path}/nimbus_face_$safeId.$extension',
+    );
+    await tempFile.writeAsBytes(bytes, flush: true);
+    return tempFile;
   }
 
   Future<File?> _resolveFileCached(MediaViewerItem item) {
@@ -256,9 +282,126 @@ class _ImageViewScreenState extends State<ImageViewScreen> {
       return;
     }
 
-    AppToast.show(
-      context,
-      'Share is temporarily unavailable in this build.',
+    AppToast.show(context, 'Share is temporarily unavailable in this build.');
+  }
+
+  Future<void> _runFaceRecognitionForCurrent() async {
+    if (_isRecognizingFace) {
+      return;
+    }
+
+    final MediaViewerItem? item = _currentItem;
+    if (item == null) {
+      return;
+    }
+
+    final File? file = await _resolveFileCached(item);
+    if (!mounted) {
+      return;
+    }
+    final bool fileExists = file != null && await file.exists();
+    if (!mounted) {
+      return;
+    }
+    if (!fileExists) {
+      AppToast.show(context, 'Could not load this image for face recognition.');
+      return;
+    }
+
+    setState(() {
+      _isRecognizingFace = true;
+    });
+
+    final FaceRecognitionService recognizer = FaceRecognitionService();
+    try {
+      final List<FaceRecord> results = await recognizer.processImage(file);
+      final List<FaceAlbum> albums = await HiveFaceService().listAlbums();
+      if (!mounted) {
+        return;
+      }
+      await _showFaceRecognitionResultSheet(results, albums);
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      AppToast.show(context, 'Face recognition failed for this image.');
+    } finally {
+      await recognizer.dispose();
+      if (mounted) {
+        setState(() {
+          _isRecognizingFace = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _showFaceRecognitionResultSheet(
+    List<FaceRecord> records,
+    List<FaceAlbum> albums,
+  ) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (BuildContext context) {
+        final Map<String, int> photoCountByPerson = <String, int>{
+          for (final FaceAlbum album in albums)
+            album.personId: album.photoCount,
+        };
+        return SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 18),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(
+                  'Face Recognition',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Text('Faces found in this photo: ${records.length}'),
+                Text('People in local face albums: ${albums.length}'),
+                const SizedBox(height: 12),
+                if (records.isEmpty)
+                  const Text('No faces detected in this image.')
+                else
+                  ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: records.length,
+                    separatorBuilder: (BuildContext context, int index) =>
+                        const Divider(height: 16),
+                    itemBuilder: (BuildContext context, int index) {
+                      final FaceRecord record = records[index];
+                      final int photos =
+                          photoCountByPerson[record.personId] ?? 1;
+                      return Row(
+                        children: <Widget>[
+                          CircleAvatar(
+                            radius: 16,
+                            backgroundColor: const Color(0xFF2A2A2A),
+                            child: Text(
+                              '${index + 1}',
+                              style: const TextStyle(color: Colors.white70),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              'Matched to ${record.personId} ($photos photos)',
+                            ),
+                          ),
+                        ],
+                      );
+                    },
+                  ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -451,6 +594,22 @@ class _ImageViewScreenState extends State<ImageViewScreen> {
           style: const TextStyle(color: Colors.white70, fontSize: 14),
         ),
         actions: <Widget>[
+          IconButton(
+            tooltip: 'Face ID',
+            onPressed: _isRecognizingFace
+                ? null
+                : _runFaceRecognitionForCurrent,
+            icon: _isRecognizingFace
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(
+                    Icons.face_retouching_natural,
+                    color: Colors.white,
+                  ),
+          ),
           IconButton(
             tooltip: 'Info',
             onPressed: _showInfo,
