@@ -24,6 +24,9 @@ class CloudSyncBatchProgress {
 class MockCloudSyncService {
   MockCloudSyncService(this.repository);
 
+  // Demo-only endpoint to show that encrypted blobs go to a local NAS.
+  static const String _localNasBaseUrl = 'http://192.168.1.24:9000/nimbus';
+
   final CloudSyncRepository repository;
   final Random _random = Random();
 
@@ -77,24 +80,39 @@ class MockCloudSyncService {
       }
 
       bool didFail = _random.nextInt(100) < 8;
-      for (int i = 1; i <= 8; i += 1) {
-        final double progress = 0.35 + ((i / 8) * 0.65);
-        await Future<void>.delayed(const Duration(milliseconds: 150));
-        await repository.setStatus(
-          mediaId,
-          CloudSyncStatus.uploading,
-          progress: progress,
-        );
-        onProgress?.call(
-          CloudSyncBatchProgress(
-            total: targets.length,
-            completed: completed,
-            currentMediaId: mediaId,
-            currentPhase: 'Uploading',
-            currentItemProgress: progress,
-          ),
-        );
-      }
+      await _simulateNasBlobTransfer(
+        mediaId: mediaId,
+        blobType: 'thumbnail',
+        startProgress: 0.35,
+        endProgress: 0.58,
+        total: targets.length,
+        completed: completed,
+        onProgress: onProgress,
+      );
+      await _simulateNasBlobTransfer(
+        mediaId: mediaId,
+        blobType: 'image',
+        startProgress: 0.58,
+        endProgress: 0.9,
+        total: targets.length,
+        completed: completed,
+        onProgress: onProgress,
+      );
+      await _simulateNasBlobTransfer(
+        mediaId: mediaId,
+        blobType: 'metadata',
+        startProgress: 0.9,
+        endProgress: 0.98,
+        total: targets.length,
+        completed: completed,
+        onProgress: onProgress,
+      );
+      await _simulateNasMetadataFetch(
+        mediaId: mediaId,
+        total: targets.length,
+        completed: completed,
+        onProgress: onProgress,
+      );
 
       if (didFail) {
         await repository.setStatus(
@@ -120,5 +138,63 @@ class MockCloudSyncService {
         ),
       );
     }
+  }
+
+  Future<void> _simulateNasBlobTransfer({
+    required String mediaId,
+    required String blobType,
+    required double startProgress,
+    required double endProgress,
+    required int total,
+    required int completed,
+    required CloudSyncProgressCallback? onProgress,
+  }) async {
+    // Demo-only: this simulates uploading encrypted .enc blobs to local NAS.
+    final String blobUrl =
+        '$_localNasBaseUrl/blobs/$mediaId/$blobType.enc';
+    for (int i = 1; i <= 4; i += 1) {
+      final double progress =
+          startProgress + ((i / 4) * (endProgress - startProgress));
+      await Future<void>.delayed(const Duration(milliseconds: 130));
+      await repository.setStatus(
+        mediaId,
+        CloudSyncStatus.uploading,
+        progress: progress,
+      );
+      onProgress?.call(
+        CloudSyncBatchProgress(
+          total: total,
+          completed: completed,
+          currentMediaId: mediaId,
+          currentPhase:
+              'NAS upload: $blobType.enc -> ${Uri.parse(blobUrl).host} '
+              '(encrypted blob)',
+          currentItemProgress: progress,
+        ),
+      );
+    }
+  }
+
+  Future<void> _simulateNasMetadataFetch({
+    required String mediaId,
+    required int total,
+    required int completed,
+    required CloudSyncProgressCallback? onProgress,
+  }) async {
+    // Demo-only fetch to show encrypted metadata retrieval from local NAS.
+    final String metadataUrl =
+        '$_localNasBaseUrl/blobs/$mediaId/metadata.enc';
+    await Future<void>.delayed(const Duration(milliseconds: 120));
+    await repository.setStatus(mediaId, CloudSyncStatus.uploading, progress: 1);
+    onProgress?.call(
+      CloudSyncBatchProgress(
+        total: total,
+        completed: completed,
+        currentMediaId: mediaId,
+        currentPhase:
+            'NAS fetch: metadata.enc <- ${Uri.parse(metadataUrl).host}',
+        currentItemProgress: 1,
+      ),
+    );
   }
 }

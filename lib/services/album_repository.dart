@@ -32,4 +32,6 @@ abstract interface class AppAlbumRepository {
     String? mediaId,
     String? localPath,
   });
+
+  Future<void> setAlbumFaceEnabled(String albumId, bool enabled);
 }

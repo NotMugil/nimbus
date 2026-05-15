@@ -172,6 +172,21 @@ class SharedPreferencesAppAlbumRepository implements AppAlbumRepository {
   }
 
   @override
+  Future<void> setAlbumFaceEnabled(String albumId, bool enabled) async {
+    final List<AppAlbum> albums = await listAlbums();
+    final int index = albums.indexWhere(
+      (AppAlbum album) => album.id == albumId,
+    );
+    if (index < 0) {
+      return;
+    }
+
+    final AppAlbum existing = albums[index];
+    albums[index] = existing.copyWith(faceRecognitionEnabled: enabled);
+    await _saveAlbums(albums);
+  }
+
+  @override
   Future<AppAlbum> createAlbum(String name) async {
     final String trimmed = name.trim();
     if (trimmed.isEmpty) {

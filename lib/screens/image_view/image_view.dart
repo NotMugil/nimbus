@@ -7,13 +7,10 @@ import 'package:iconify_flutter/icons/ion.dart';
 import 'package:intl/intl.dart';
 import 'package:nimbus/core/media/media_item.dart';
 import 'package:nimbus/core/media/thumbnail_ref.dart';
-import 'package:nimbus/models/face_album.dart';
-import 'package:nimbus/models/face_record.dart';
+import 'package:nimbus/models/app_album.dart';
 import 'package:nimbus/screens/media_viewer/media_viewer_item.dart';
 import 'package:nimbus/services/album_repository.dart';
-import 'package:nimbus/services/face_recognition_service.dart';
 import 'package:nimbus/services/hive_trash.dart';
-import 'package:nimbus/services/hive_face_service.dart';
 import 'package:nimbus/services/trash_repository.dart';
 import 'package:nimbus/services/prefs_album.dart';
 import 'package:nimbus/widgets/toast.dart';
@@ -312,21 +309,20 @@ class _ImageViewScreenState extends State<ImageViewScreen> {
       _isRecognizingFace = true;
     });
 
-    final FaceRecognitionService recognizer = FaceRecognitionService();
     try {
-      final List<FaceRecord> results = await recognizer.processImage(file);
-      final List<FaceAlbum> albums = await HiveFaceService().listAlbums();
+      final List<AppAlbum> recognizedPeople = await _recognizedPeopleForItem(
+        item,
+      );
       if (!mounted) {
         return;
       }
-      await _showFaceRecognitionResultSheet(results, albums);
+      await _showFaceRecognitionResultSheet(recognizedPeople);
     } catch (_) {
       if (!mounted) {
         return;
       }
       AppToast.show(context, 'Face recognition failed for this image.');
     } finally {
-      await recognizer.dispose();
       if (mounted) {
         setState(() {
           _isRecognizingFace = false;
@@ -335,18 +331,113 @@ class _ImageViewScreenState extends State<ImageViewScreen> {
     }
   }
 
+  Future<List<AppAlbum>> _recognizedPeopleForItem(MediaViewerItem item) async {
+    final List<AppAlbum> albums = await widget.appAlbumRepository.listAlbums();
+    final Map<String, AppAlbum> recognizedById = <String, AppAlbum>{};
+    if (item.source == MediaViewerItemSource.asset) {
+      final String? mediaId = item.assetItem?.id;
+      if (mediaId == null) {
+        return const <AppAlbum>[];
+      }
+      for (final AppAlbum album in albums) {
+        if (album.faceRecognitionEnabled && album.mediaIds.contains(mediaId)) {
+          recognizedById[album.id] = album;
+        }
+      }
+    } else {
+      final String? localPath = item.localFilePath;
+      if (localPath == null) {
+        return const <AppAlbum>[];
+      }
+      for (final AppAlbum album in albums) {
+        if (album.faceRecognitionEnabled &&
+            album.localMediaPaths.contains(localPath)) {
+          recognizedById[album.id] = album;
+        }
+      }
+    }
+
+    final List<AppAlbum> recognized = recognizedById.values
+        .where((AppAlbum album) => album.name.trim().isNotEmpty)
+        .toList(growable: false)
+      ..sort((AppAlbum a, AppAlbum b) => a.name.compareTo(b.name));
+    return recognized;
+  }
+
+  Future<Uint8List?> _albumCoverBytes(AppAlbum album) async {
+    Future<Uint8List?> bytesForAssetId(String assetId) async {
+      final AssetEntity? asset = await AssetEntity.fromId(assetId);
+      if (asset == null) {
+        return null;
+      }
+      return asset.thumbnailDataWithSize(
+        const ThumbnailSize.square(180),
+        quality: 80,
+      );
+    }
+
+    final String? coverMediaId = album.coverMediaId;
+    if (coverMediaId != null && coverMediaId.isNotEmpty) {
+      final Uint8List? bytes = await bytesForAssetId(coverMediaId);
+      if (bytes != null) {
+        return bytes;
+      }
+    }
+
+    if (album.mediaIds.isNotEmpty) {
+      return bytesForAssetId(album.mediaIds.first);
+    }
+    return null;
+  }
+
+  Widget _buildAlbumAvatar(AppAlbum album) {
+    final String? localCoverPath = album.coverLocalPath;
+    if (localCoverPath != null && localCoverPath.isNotEmpty) {
+      final File file = File(localCoverPath);
+      if (file.existsSync()) {
+        return ClipOval(
+          child: SizedBox(
+            width: 32,
+            height: 32,
+            child: Image.file(file, fit: BoxFit.cover),
+          ),
+        );
+      }
+    }
+
+    return ClipOval(
+      child: SizedBox(
+        width: 32,
+        height: 32,
+        child: FutureBuilder<Uint8List?>(
+          future: _albumCoverBytes(album),
+          builder: (BuildContext context, AsyncSnapshot<Uint8List?> snapshot) {
+            if (snapshot.hasData && snapshot.data != null) {
+              return Image.memory(snapshot.data!, fit: BoxFit.cover);
+            }
+            return CircleAvatar(
+              radius: 16,
+              backgroundColor: const Color(0xFF2A2A2A),
+              child: Text(
+                album.name.trim().isEmpty
+                    ? '?'
+                    : album.name.trim().substring(0, 1).toUpperCase(),
+                style: const TextStyle(color: Colors.white70),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+
   Future<void> _showFaceRecognitionResultSheet(
-    List<FaceRecord> records,
-    List<FaceAlbum> albums,
+    List<AppAlbum> recognizedPeople,
   ) async {
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
       builder: (BuildContext context) {
-        final Map<String, int> photoCountByPerson = <String, int>{
-          for (final FaceAlbum album in albums)
-            album.personId: album.photoCount,
-        };
         return SafeArea(
           top: false,
           child: Padding(
@@ -362,35 +453,25 @@ class _ImageViewScreenState extends State<ImageViewScreen> {
                   ),
                 ),
                 const SizedBox(height: 10),
-                Text('Faces found in this photo: ${records.length}'),
-                Text('People in local face albums: ${albums.length}'),
+                Text('People recognized: ${recognizedPeople.length}'),
                 const SizedBox(height: 12),
-                if (records.isEmpty)
-                  const Text('No faces detected in this image.')
+                if (recognizedPeople.isEmpty)
+                  const Text('No faces recognized.')
                 else
                   ListView.separated(
                     shrinkWrap: true,
-                    itemCount: records.length,
+                    itemCount: recognizedPeople.length,
                     separatorBuilder: (BuildContext context, int index) =>
                         const Divider(height: 16),
                     itemBuilder: (BuildContext context, int index) {
-                      final FaceRecord record = records[index];
-                      final int photos =
-                          photoCountByPerson[record.personId] ?? 1;
+                      final AppAlbum personAlbum = recognizedPeople[index];
                       return Row(
                         children: <Widget>[
-                          CircleAvatar(
-                            radius: 16,
-                            backgroundColor: const Color(0xFF2A2A2A),
-                            child: Text(
-                              '${index + 1}',
-                              style: const TextStyle(color: Colors.white70),
-                            ),
-                          ),
+                          _buildAlbumAvatar(personAlbum),
                           const SizedBox(width: 12),
                           Expanded(
                             child: Text(
-                              'Matched to ${record.personId} ($photos photos)',
+                              personAlbum.name.trim(),
                             ),
                           ),
                         ],

@@ -651,6 +651,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final double aggregate = _cloudSyncTotal == 0
         ? 0
         : (_cloudSyncCompleted + _cloudSyncCurrentProgress) / _cloudSyncTotal;
+    final int percent = (aggregate.clamp(0, 1) * 100).round();
     return SliverToBoxAdapter(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(14, 10, 14, 0),
@@ -669,6 +670,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                   'Encrypting and uploading $_cloudSyncCompleted/$_cloudSyncTotal',
                   style: Theme.of(context).textTheme.labelMedium?.copyWith(
                     fontWeight: FontWeight.w600,
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(
+                    'Cloud sync progress: $percent%',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: AppColors.textSecondary,
+                    ),
                   ),
                 ),
                 if (_cloudSyncPhase != null)

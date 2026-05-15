@@ -1,13 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:iconify_flutter/iconify_flutter.dart';
 import 'package:iconify_flutter/icons/ion.dart';
+import 'package:nimbus/core/media/media_item.dart';
 import 'package:nimbus/core/media/media_repository.dart';
 import 'package:nimbus/core/media/photo_repository.dart';
+import 'package:nimbus/core/media/thumbnail_ref.dart';
 import 'package:nimbus/models/app_album.dart';
 import 'package:nimbus/models/device_album.dart';
 import 'package:nimbus/screens/album_view/album_view.dart';
 import 'package:nimbus/screens/albums/album_widgets.dart';
 import 'package:nimbus/services/album_repository.dart';
+import 'package:nimbus/services/mock_face_recognition_service.dart';
 import 'package:nimbus/services/prefs_album.dart';
 import 'package:nimbus/theme/colors.dart';
 
@@ -29,29 +32,40 @@ class SearchScreen extends StatefulWidget {
 
 class _SearchScreenState extends State<SearchScreen>
     with WidgetsBindingObserver {
-  static final List<_SearchPlaceholder> _people = <_SearchPlaceholder>[
-    _SearchPlaceholder('Family', Ion.person_outline),
-    _SearchPlaceholder('Friends', Ion.person_outline),
-    _SearchPlaceholder('Coworkers', Ion.person_outline),
-    _SearchPlaceholder('Favorites', Ion.person_outline),
-  ];
+  static final List<_SearchPlaceholder> _fallbackPeople =
+      <_SearchPlaceholder>[
+        _SearchPlaceholder.icon('Family', Ion.person_outline),
+        _SearchPlaceholder.icon('Friends', Ion.person_outline),
+        _SearchPlaceholder.icon('Coworkers', Ion.person_outline),
+        _SearchPlaceholder.icon('Favorites', Ion.person_outline),
+      ];
+  static final List<_SearchPlaceholder> _peopleFromPermissionDenied =
+      <_SearchPlaceholder>[
+        _SearchPlaceholder.icon('Family', Ion.person_outline),
+        _SearchPlaceholder.icon('Friends', Ion.person_outline),
+        _SearchPlaceholder.icon('Coworkers', Ion.person_outline),
+        _SearchPlaceholder.icon('Favorites', Ion.person_outline),
+      ];
   static final List<_SearchPlaceholder> _locations = <_SearchPlaceholder>[
-    _SearchPlaceholder('Chennai', Ion.location_outline),
-    _SearchPlaceholder('Bengaluru', Ion.location_outline),
-    _SearchPlaceholder('Mumbai', Ion.location_outline),
-    _SearchPlaceholder('Hyderabad', Ion.location_outline),
+    _SearchPlaceholder.icon('Chennai', Ion.location_outline),
+    _SearchPlaceholder.icon('Bengaluru', Ion.location_outline),
+    _SearchPlaceholder.icon('Mumbai', Ion.location_outline),
+    _SearchPlaceholder.icon('Hyderabad', Ion.location_outline),
   ];
   static final List<_SearchPlaceholder> _fileTypes = <_SearchPlaceholder>[
-    _SearchPlaceholder('Images', Ion.image_outline),
-    _SearchPlaceholder('Videos', Ion.videocam_outline),
-    _SearchPlaceholder('Screenshots', Ion.image_outline),
-    _SearchPlaceholder('GIFs', Ion.film_outline),
+    _SearchPlaceholder.icon('Images', Ion.image_outline),
+    _SearchPlaceholder.icon('Videos', Ion.videocam_outline),
+    _SearchPlaceholder.icon('Screenshots', Ion.image_outline),
+    _SearchPlaceholder.icon('GIFs', Ion.film_outline),
   ];
 
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
+  final MockFaceRecognitionService _mockFaceRecognitionService =
+      MockFaceRecognitionService();
   List<DeviceAlbum> _deviceAlbums = const <DeviceAlbum>[];
   List<AppAlbum> _appAlbums = const <AppAlbum>[];
+  List<_SearchPlaceholder> _people = _fallbackPeople;
   bool _isLoading = true;
   String _query = '';
 
@@ -86,16 +100,30 @@ class _SearchScreenState extends State<SearchScreen>
           .requestPermission();
       final List<AppAlbum> appAlbums = await widget.appAlbumRepository
           .listAlbums();
-      final List<DeviceAlbum> deviceAlbums =
-          permission == MediaPermissionStatus.denied
+      final bool denied = permission == MediaPermissionStatus.denied;
+      final List<DeviceAlbum> deviceAlbums = denied
           ? const <DeviceAlbum>[]
           : await widget.mediaRepository.fetchDeviceAlbums();
+      final List<_SearchPlaceholder> peoplePreviews;
+      if (denied) {
+        peoplePreviews = _peopleFromPermissionDenied;
+      } else {
+        final List<MediaItem> mediaItems = (await widget.mediaRepository
+                .fetchAllMedia())
+            .take(48)
+            .toList(growable: false);
+        peoplePreviews = _mockFaceRecognitionService
+            .buildPeoplePreview(mediaItems)
+            .map(_SearchPlaceholder.fromMockIdentity)
+            .toList(growable: false);
+      }
       if (!mounted) {
         return;
       }
       setState(() {
         _deviceAlbums = deviceAlbums;
         _appAlbums = appAlbums;
+        _people = peoplePreviews;
         _isLoading = false;
       });
     } catch (_) {
@@ -103,6 +131,7 @@ class _SearchScreenState extends State<SearchScreen>
         return;
       }
       setState(() {
+        _people = _fallbackPeople;
         _deviceAlbums = const <DeviceAlbum>[];
         _appAlbums = const <AppAlbum>[];
         _isLoading = false;
@@ -296,19 +325,7 @@ class _SearchSectionPage extends StatelessWidget {
         itemBuilder: (BuildContext context, int index) {
           return _SearchPreviewTile(
             label: items[index].label,
-            preview: DecoratedBox(
-              decoration: BoxDecoration(
-                color: AppColors.surfaceVariant,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Center(
-                child: Iconify(
-                  items[index].icon,
-                  color: AppColors.textSecondary,
-                  size: 20,
-                ),
-              ),
-            ),
+            preview: _SearchPlaceholderPreview(item: items[index]),
           );
         },
       ),
@@ -481,19 +498,7 @@ class _SearchPlaceholderRow extends StatelessWidget {
           return _SearchPreviewTile(
             width: 88,
             label: item.label,
-            preview: DecoratedBox(
-              decoration: BoxDecoration(
-                color: AppColors.surfaceVariant,
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: Center(
-                child: Iconify(
-                  item.icon,
-                  color: AppColors.textSecondary,
-                  size: 20,
-                ),
-              ),
-            ),
+            preview: _SearchPlaceholderPreview(item: item),
           );
         },
       ),
@@ -597,10 +602,55 @@ class _SearchPreviewTile extends StatelessWidget {
 }
 
 class _SearchPlaceholder {
-  const _SearchPlaceholder(this.label, this.icon);
+  const _SearchPlaceholder.icon(this.label, this.icon)
+    : localThumbnail = null,
+      mockAssetPath = null;
+
+  factory _SearchPlaceholder.fromMockIdentity(MockFaceIdentity identity) {
+    return _SearchPlaceholder._(
+      label: identity.label,
+      icon: Ion.person_outline,
+      localThumbnail: identity.localThumbnail,
+      mockAssetPath: identity.mockAssetPath,
+    );
+  }
+
+  const _SearchPlaceholder._({
+    required this.label,
+    required this.icon,
+    this.localThumbnail,
+    this.mockAssetPath,
+  });
 
   final String label;
   final String icon;
+  final ThumbnailRef? localThumbnail;
+  final String? mockAssetPath;
+}
+
+class _SearchPlaceholderPreview extends StatelessWidget {
+  const _SearchPlaceholderPreview({required this.item});
+
+  final _SearchPlaceholder item;
+
+  @override
+  Widget build(BuildContext context) {
+    if (item.localThumbnail != null) {
+      return ThumbnailRefImage(thumbnail: item.localThumbnail!);
+    }
+    if (item.mockAssetPath != null) {
+      return Image.asset(item.mockAssetPath!, fit: BoxFit.cover);
+    }
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: AppColors.surfaceVariant,
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Center(
+        child: Iconify(item.icon, color: AppColors.textSecondary, size: 20),
+      ),
+    );
+  }
 }
 
 class _SearchAlbumEntry {

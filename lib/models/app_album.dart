@@ -9,6 +9,7 @@ class AppAlbum {
     this.coverMediaId,
     this.coverLocalPath,
     required this.createdAt,
+    this.faceRecognitionEnabled = true,
   });
 
   final String id;
@@ -18,6 +19,7 @@ class AppAlbum {
   final String? coverMediaId;
   final String? coverLocalPath;
   final DateTime createdAt;
+  final bool faceRecognitionEnabled;
 
   AppAlbum copyWith({
     String? id,
@@ -29,6 +31,7 @@ class AppAlbum {
     bool clearCoverMediaId = false,
     bool clearCoverLocalPath = false,
     DateTime? createdAt,
+    bool? faceRecognitionEnabled,
   }) {
     return AppAlbum(
       id: id ?? this.id,
@@ -42,6 +45,8 @@ class AppAlbum {
           ? null
           : (coverLocalPath ?? this.coverLocalPath),
       createdAt: createdAt ?? this.createdAt,
+      faceRecognitionEnabled:
+          faceRecognitionEnabled ?? this.faceRecognitionEnabled,
     );
   }
 
@@ -54,6 +59,7 @@ class AppAlbum {
       'coverMediaId': coverMediaId,
       'coverLocalPath': coverLocalPath,
       'createdAt': createdAt.toIso8601String(),
+      'faceRecognitionEnabled': faceRecognitionEnabled,
     };
   }
 
@@ -71,6 +77,8 @@ class AppAlbum {
       coverMediaId: json['coverMediaId'] as String?,
       coverLocalPath: json['coverLocalPath'] as String?,
       createdAt: DateTime.parse(json['createdAt'] as String).toLocal(),
+      faceRecognitionEnabled:
+          (json['faceRecognitionEnabled'] as bool?) ?? true,
     );
   }
 

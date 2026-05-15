@@ -317,6 +317,13 @@ class _AlbumViewScreenState extends State<AlbumViewScreen>
                 title: const Text('Set Album Preview'),
                 onTap: () => Navigator.of(context).pop('cover'),
               ),
+              ListTile(
+                leading: const Iconify(Ion.person_outline, size: 18),
+                title: Text(_appAlbumState?.faceRecognitionEnabled ?? widget.appAlbum?.faceRecognitionEnabled ?? true
+                    ? 'Disable Face Recognition'
+                    : 'Enable Face Recognition'),
+                onTap: () => Navigator.of(context).pop('toggle-face'),
+              ),
             ],
           ),
         );
@@ -331,6 +338,10 @@ class _AlbumViewScreenState extends State<AlbumViewScreen>
     }
     if (action == 'cover') {
       await _setAlbumPreview();
+      return;
+    }
+    if (action == 'toggle-face') {
+      await _toggleFaceRecognition();
     }
   }
 
@@ -412,6 +423,44 @@ class _AlbumViewScreenState extends State<AlbumViewScreen>
       });
     }
     AppToast.show(context, 'Album preview updated');
+  }
+
+  Future<void> _toggleFaceRecognition() async {
+    if (widget.isDeviceAlbum) {
+      return;
+    }
+
+    final AppAlbum? album = _appAlbumState ?? widget.appAlbum;
+    if (album == null) {
+      return;
+    }
+
+    try {
+      final bool nextEnabled = !album.faceRecognitionEnabled;
+      await widget.appAlbumRepository.setAlbumFaceEnabled(album.id, nextEnabled);
+      final AppAlbum? refreshed = await widget.appAlbumRepository.getById(
+        album.id,
+      );
+      if (!mounted) {
+        return;
+      }
+      if (refreshed != null) {
+        setState(() {
+          _appAlbumState = refreshed;
+        });
+        AppToast.show(
+          context,
+          nextEnabled
+              ? 'Face recognition enabled for this album'
+              : 'Face recognition disabled for this album',
+        );
+      }
+    } catch (_) {
+      if (!mounted) {
+        return;
+      }
+      AppToast.show(context, 'Could not update album settings.');
+    }
   }
 
   Future<void> _loadMedia() async {
@@ -1155,6 +1204,7 @@ class _AlbumViewScreenState extends State<AlbumViewScreen>
     final double aggregate = _cloudSyncTotal == 0
         ? 0
         : (_cloudSyncCompleted + _cloudSyncCurrentProgress) / _cloudSyncTotal;
+    final int percent = (aggregate.clamp(0, 1) * 100).round();
     return Padding(
       padding: const EdgeInsets.fromLTRB(10, 8, 10, 0),
       child: DecoratedBox(
@@ -1173,6 +1223,15 @@ class _AlbumViewScreenState extends State<AlbumViewScreen>
                 style: Theme.of(
                   context,
                 ).textTheme.labelMedium?.copyWith(fontWeight: FontWeight.w600),
+              ),
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Text(
+                  'Cloud sync progress: $percent%',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: AppColors.textSecondary,
+                  ),
+                ),
               ),
               if (_cloudSyncPhase != null)
                 Padding(

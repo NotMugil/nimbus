@@ -132,41 +132,73 @@ class AlbumsScreenState extends State<AlbumsScreen>
 
   Future<void> _createAlbum() async {
     String draftName = '';
-    final String? inputName = await showDialog<String>(
+    bool enableFaceRecognition = true;
+    final Map<String, dynamic>? result =
+        await showDialog<Map<String, dynamic>>(
       context: context,
       builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('Create Album'),
-          content: TextField(
-            autofocus: true,
-            textInputAction: TextInputAction.done,
-            decoration: const InputDecoration(hintText: 'Album name'),
-            onChanged: (String value) {
-              draftName = value;
-            },
-            onSubmitted: (_) {
-              Navigator.of(context).pop(draftName.trim());
-            },
-          ),
-          actions: <Widget>[
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-            FilledButton(
-              onPressed: () => Navigator.of(context).pop(draftName.trim()),
-              child: const Text('Create'),
-            ),
-          ],
+        return StatefulBuilder(
+          builder:
+              (BuildContext context, StateSetter setState) {
+            return AlertDialog(
+              title: const Text('Create Album'),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  TextField(
+                    autofocus: true,
+                    textInputAction: TextInputAction.done,
+                    decoration:
+                        const InputDecoration(hintText: 'Album name'),
+                    onChanged: (String value) {
+                      draftName = value;
+                    },
+                  ),
+                  const SizedBox(height: 16),
+                  Row(
+                    children: <Widget>[
+                      Checkbox(
+                        value: enableFaceRecognition,
+                        onChanged: (bool? value) {
+                          setState(() {
+                            enableFaceRecognition = value ?? true;
+                          });
+                        },
+                      ),
+                      const SizedBox(width: 8),
+                      const Expanded(
+                        child: Text('Enable for Face ID'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              actions: <Widget>[
+                TextButton(
+                  onPressed: () => Navigator.of(context).pop(),
+                  child: const Text('Cancel'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.of(context).pop(
+                    <String, dynamic>{
+                      'name': draftName.trim(),
+                      'faceRecognitionEnabled': enableFaceRecognition,
+                    },
+                  ),
+                  child: const Text('Create'),
+                ),
+              ],
+            );
+          },
         );
       },
     );
 
-    if (inputName == null || !mounted) {
+    if (result == null || !mounted) {
       return;
     }
 
-    final String albumName = inputName.trim();
+    final String albumName = (result['name'] as String?) ?? '';
     if (albumName.isEmpty) {
       AppToast.show(context, 'Album name cannot be empty.');
       return;
@@ -185,7 +217,17 @@ class AlbumsScreenState extends State<AlbumsScreen>
         return;
       }
 
-      await widget.appAlbumRepository.createAlbum(albumName);
+      final AppAlbum album =
+          await widget.appAlbumRepository.createAlbum(albumName);
+      final bool enableFaces =
+          (result['faceRecognitionEnabled'] as bool?) ?? true;
+      if (enableFaces != album.faceRecognitionEnabled) {
+        await widget.appAlbumRepository.setAlbumFaceEnabled(
+          album.id,
+          enableFaces,
+        );
+      }
+
       final List<AppAlbum> appAlbums = await widget.appAlbumRepository
           .listAlbums();
 
